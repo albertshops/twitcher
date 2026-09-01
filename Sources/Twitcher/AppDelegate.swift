@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "rectangle.2.swap", accessibilityDescription: "Twitcher")
 
         let menu = NSMenu()
-        menu.addItem(withTitle: "Show Windows", action: #selector(showChooser), keyEquivalent: "")
+        menu.addItem(withTitle: "Show Programs", action: #selector(showChooser), keyEquivalent: "")
         menu.addItem(withTitle: "Open Accessibility Settings…", action: #selector(openAccessibilitySettings), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Clear Assignments", action: #selector(clearAssignments), keyEquivalent: "")
@@ -67,12 +67,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func activate(letter: Character) {
         guard let identity = store.load().identity(for: letter),
-              let window = service.matchingWindow(for: identity)
+              let program = service.matchingProgram(for: identity)
         else {
             NSSound.beep()
             return
         }
-        service.focus(window)
+        service.cycleWindows(in: program)
     }
 
     private func showPermissionAlert() {

@@ -19,7 +19,7 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
     private let onAssignmentsChanged: () -> Void
     private let tableView = NSTableView()
     private let emptyLabel = NSTextField(labelWithString: "")
-    private var rows: [ManagedWindow] = []
+    private var rows: [ManagedProgram] = []
     private var book: AssignmentBook
 
     init(service: WindowService, store: AssignmentStore, onAssignmentsChanged: @escaping () -> Void) {
@@ -67,7 +67,7 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < rows.count, let identifier = tableColumn?.identifier else { return nil }
-        let window = rows[row]
+        let program = rows[row]
         let cell = NSTableCellView()
         let text = NSTextField(labelWithString: "")
         text.lineBreakMode = .byTruncatingTail
@@ -82,13 +82,15 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
 
         switch identifier.rawValue {
         case "key":
-            text.stringValue = book.letter(for: window.identity).map { "⌥\(String($0).uppercased())" } ?? "—"
+            text.stringValue = book.letter(for: program.identity).map { "⌥\(String($0).uppercased())" } ?? "—"
             text.alignment = .center
             text.font = .monospacedSystemFont(ofSize: 14, weight: .semibold)
         case "app":
-            text.stringValue = window.application.localizedName ?? "Unknown Application"
+            text.stringValue = program.identity.name
         default:
-            text.stringValue = window.title + (window.isMinimized ? "  (minimized)" : "")
+            let count = program.windows.count
+            let suffix = count == 1 ? "window" : "windows"
+            text.stringValue = "\(count) \(suffix): " + program.windows.map(\.title).joined(separator: ", ")
         }
         return cell
     }
@@ -105,9 +107,9 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
         content.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView = content
 
-        let title = NSTextField(labelWithString: "Choose a window")
+        let title = NSTextField(labelWithString: "Choose a program")
         title.font = .systemFont(ofSize: 24, weight: .bold)
-        let instructions = NSTextField(labelWithString: "Select a row and type A–Z to assign it. Return opens it. Delete clears its assignment.")
+        let instructions = NSTextField(labelWithString: "Select a program and type A–Z to assign it. Return opens it. Delete clears its assignment.")
         instructions.textColor = .secondaryLabelColor
 
         let scrollView = NSScrollView()
@@ -122,7 +124,7 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
         tableView.delegate = self
         tableView.dataSource = self
         tableView.target = self
-        tableView.doubleAction = #selector(openSelectedWindow)
+        tableView.doubleAction = #selector(openSelectedProgram)
 
         let keyColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("key"))
         keyColumn.width = 72
@@ -160,9 +162,9 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
 
     private func refresh() {
         book = store.load()
-        rows = service.windows()
+        rows = service.programs()
         emptyLabel.stringValue = service.isAccessibilityGranted()
-            ? "No standard windows are currently open."
+            ? "No programs with standard windows are currently open."
             : "Accessibility access is required. Use the Twitcher menu to grant it."
         emptyLabel.isHidden = !rows.isEmpty
         tableView.reloadData()
@@ -174,11 +176,11 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
             close()
             return true
         case 36, 76: // Return or keypad Enter
-            openSelectedWindow()
+            openSelectedProgram()
             return true
         case 51, 117: // Delete or forward delete
-            guard let selected = selectedWindow else { return true }
-            book.remove(window: selected.identity)
+            guard let selected = selectedProgram else { return true }
+            book.remove(program: selected.identity)
             persistChanges()
             return true
         case 125: // Down arrow
@@ -192,7 +194,7 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
                   let character = event.charactersIgnoringModifiers?.lowercased().first,
                   character.isASCII,
                   character.isLetter,
-                  let selected = selectedWindow
+                  let selected = selectedProgram
             else { return false }
             book.assign(character, to: selected.identity)
             persistChanges()
@@ -200,7 +202,7 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
         }
     }
 
-    private var selectedWindow: ManagedWindow? {
+    private var selectedProgram: ManagedProgram? {
         let row = tableView.selectedRow
         return rows.indices.contains(row) ? rows[row] : nil
     }
@@ -213,10 +215,10 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
         tableView.scrollRowToVisible(next)
     }
 
-    @objc private func openSelectedWindow() {
-        guard let selectedWindow else { return }
+    @objc private func openSelectedProgram() {
+        guard let selectedProgram else { return }
         close()
-        service.focus(selectedWindow)
+        service.cycleWindows(in: selectedProgram)
     }
 
     private func persistChanges() {

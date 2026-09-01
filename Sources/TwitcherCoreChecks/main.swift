@@ -8,47 +8,46 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
-let editor = WindowIdentity(
-    bundleIdentifier: "com.example.Editor",
-    title: "Notes.txt",
-    documentURL: "file:///tmp/Notes.txt"
-)
+let editor = ProgramIdentity(bundleIdentifier: "com.example.Editor", name: "Editor")
 
 var book = AssignmentBook()
 book.assign("N", to: editor)
 expect(book.identity(for: "n") == editor, "letter lookup should be case-insensitive")
-expect(book.letter(for: editor) == "n", "window lookup should return its letter")
+expect(book.letter(for: editor) == "n", "program lookup should return its letter")
 
 book.assign("e", to: editor)
-expect(book.identity(for: "n") == nil, "reassigning a window should release its old letter")
-expect(book.identity(for: "e") == editor, "reassigning a window should use its new letter")
+expect(book.identity(for: "n") == nil, "reassigning a program should release its old letter")
+expect(book.identity(for: "e") == editor, "reassigning a program should use its new letter")
 
-let browser = WindowIdentity(bundleIdentifier: "com.example.Browser", title: "Home", documentURL: nil)
+let browser = ProgramIdentity(bundleIdentifier: "com.example.Browser", name: "Browser")
 book.assign("e", to: browser)
-expect(book.identity(for: "e") == browser, "reassigning a letter should replace its old window")
-expect(book.letter(for: editor) == nil, "replaced windows should no longer have a letter")
+expect(book.identity(for: "e") == browser, "reassigning a letter should replace its old program")
+expect(book.letter(for: editor) == nil, "replaced programs should no longer have a letter")
 
-let renamedEditor = WindowIdentity(
-    bundleIdentifier: editor.bundleIdentifier,
-    title: "Notes.txt - Edited",
-    documentURL: editor.documentURL
-)
-expect(editor.matches(renamedEditor), "document URLs should survive title changes")
-let missingDocument = WindowIdentity(
-    bundleIdentifier: editor.bundleIdentifier,
-    title: editor.title,
-    documentURL: nil
-)
-expect(!editor.matches(missingDocument), "document-backed assignments should not use a title fallback")
-
-let terminal = WindowIdentity(bundleIdentifier: "com.example.Terminal", title: "Server", documentURL: nil)
-expect(terminal.matches(terminal), "titles should match windows without document URLs")
+let renamedEditor = ProgramIdentity(bundleIdentifier: editor.bundleIdentifier, name: "Renamed Editor")
+expect(editor.matches(renamedEditor), "bundle identifiers should survive program name changes")
+expect(!editor.matches(browser), "different bundle identifiers should not match")
 
 let suite = "TwitcherChecks.\(UUID().uuidString)"
 let defaults = UserDefaults(suiteName: suite)!
+defer { defaults.removePersistentDomain(forName: suite) }
 let store = AssignmentStore(defaults: defaults)
 store.save(book)
 expect(store.load() == book, "assignment storage should round-trip")
-defaults.removePersistentDomain(forName: suite)
+
+defaults.removeObject(forKey: "programAssignments")
+let legacy: [String: Any] = [
+    "assignments": [
+        "b": ["bundleIdentifier": browser.bundleIdentifier, "title": "Home"],
+        "e": ["bundleIdentifier": editor.bundleIdentifier, "title": "Notes"],
+        "n": ["bundleIdentifier": editor.bundleIdentifier, "title": "Other Notes"],
+    ],
+]
+defaults.set(try JSONSerialization.data(withJSONObject: legacy), forKey: "windowAssignments")
+let migrated = store.load()
+expect(migrated.assignments.count == 2, "migration should keep one shortcut per program")
+expect(migrated.identity(for: "b")?.bundleIdentifier == browser.bundleIdentifier, "migration should retain browser assignments")
+expect(migrated.identity(for: "e")?.bundleIdentifier == editor.bundleIdentifier, "migration should retain the first editor assignment")
+expect(migrated.identity(for: "n") == nil, "migration should discard duplicate program assignments")
 
 print("All TwitcherCore checks passed")
