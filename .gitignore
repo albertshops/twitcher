@@ -1,0 +1,18 @@
+# Swift build output and local package metadata
+.build/
+.swiftpm/
+DerivedData/
+
+# Packaged application output
+dist/
+
+# Local environment and credentials
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.mobileprovision
+
+# macOS
+.DS_Store
