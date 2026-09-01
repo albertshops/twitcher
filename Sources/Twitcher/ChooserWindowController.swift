@@ -171,6 +171,11 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
+        if event.keyCode == 51, event.modifierFlags.contains(.option) {
+            close()
+            return true
+        }
+
         switch event.keyCode {
         case 53: // Escape
             close()

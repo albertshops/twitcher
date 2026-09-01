@@ -38,10 +38,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func registerHotKeys() {
         let letters = store.load().assignments.keys.compactMap(\.first)
         hotKeys.register(
-            chooser: { [weak self] in self?.showChooser() },
+            chooser: { [weak self] in self?.toggleChooser() },
             letters: letters,
             activate: { [weak self] letter in self?.activate(letter: letter) }
         )
+    }
+
+    private func toggleChooser() {
+        if chooser.window?.isVisible == true, NSApp.isActive {
+            chooser.close()
+        } else {
+            showChooser()
+        }
     }
 
     @objc private func showChooser() {
