@@ -14,35 +14,113 @@ public struct ProgramIdentity: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-public struct AssignmentBook: Codable, Equatable, Sendable {
-    public private(set) var assignments: [String: ProgramIdentity]
+public struct WindowIdentity: Codable, Equatable, Hashable, Sendable {
+    public let bundleIdentifier: String
+    public let title: String
+    public let documentURL: String?
 
-    public init(assignments: [String: ProgramIdentity] = [:]) {
+    public init(bundleIdentifier: String, title: String, documentURL: String?) {
+        self.bundleIdentifier = bundleIdentifier
+        self.title = title
+        self.documentURL = documentURL
+    }
+
+    public func matches(_ candidate: WindowIdentity) -> Bool {
+        guard bundleIdentifier == candidate.bundleIdentifier else { return false }
+        if let documentURL {
+            return documentURL == candidate.documentURL
+        }
+        return title == candidate.title
+    }
+}
+
+public enum AssignmentTarget: Codable, Equatable, Hashable, Sendable {
+    case program(ProgramIdentity)
+    case window(WindowIdentity)
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case program
+        case window
+    }
+
+    private enum TargetType: String, Codable {
+        case program
+        case window
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(TargetType.self, forKey: .type) {
+        case .program:
+            self = .program(try container.decode(ProgramIdentity.self, forKey: .program))
+        case .window:
+            self = .window(try container.decode(WindowIdentity.self, forKey: .window))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case let .program(identity):
+            try container.encode(TargetType.program, forKey: .type)
+            try container.encode(identity, forKey: .program)
+        case let .window(identity):
+            try container.encode(TargetType.window, forKey: .type)
+            try container.encode(identity, forKey: .window)
+        }
+    }
+
+    public func matches(_ candidate: AssignmentTarget) -> Bool {
+        switch (self, candidate) {
+        case let (.program(identity), .program(candidateIdentity)):
+            identity.matches(candidateIdentity)
+        case let (.window(identity), .window(candidateIdentity)):
+            identity.matches(candidateIdentity)
+        default:
+            false
+        }
+    }
+}
+
+public struct AssignmentBook: Codable, Equatable, Sendable {
+    public private(set) var assignments: [String: AssignmentTarget]
+
+    public init(assignments: [String: AssignmentTarget] = [:]) {
         self.assignments = assignments
     }
 
-    public mutating func assign(_ letter: Character, to program: ProgramIdentity) {
+    public mutating func assign(_ letter: Character, to target: AssignmentTarget) {
         let key = String(letter).lowercased()
         guard key.count == 1, key.first?.isASCII == true, key.first?.isLetter == true else { return }
 
-        assignments = assignments.filter { !$0.value.matches(program) }
-        assignments[key] = program
+        assignments = assignments.filter { !$0.value.matches(target) }
+        assignments[key] = target
     }
 
     public mutating func remove(letter: Character) {
         assignments.removeValue(forKey: String(letter).lowercased())
     }
 
-    public mutating func remove(program: ProgramIdentity) {
-        assignments = assignments.filter { !$0.value.matches(program) }
+    public mutating func remove(target: AssignmentTarget) {
+        assignments = assignments.filter { !$0.value.matches(target) }
     }
 
-    public func letter(for program: ProgramIdentity) -> Character? {
-        assignments.first { $0.value.matches(program) }?.key.first
+    public func letter(for target: AssignmentTarget) -> Character? {
+        assignments.first { $0.value.matches(target) }?.key.first
     }
 
-    public func identity(for letter: Character) -> ProgramIdentity? {
+    public func target(for letter: Character) -> AssignmentTarget? {
         assignments[String(letter).lowercased()]
+    }
+
+    public func windowIdentities(for program: ProgramIdentity) -> [WindowIdentity] {
+        assignments.values.compactMap { target in
+            guard case let .window(identity) = target,
+                  identity.bundleIdentifier == program.bundleIdentifier
+            else { return nil }
+            return identity
+        }
     }
 }
 
@@ -62,11 +140,17 @@ public final class AssignmentStore: @unchecked Sendable {
     }
 
     public func load() -> AssignmentBook {
-        if let data = defaults.data(forKey: key),
-           let book = try? JSONDecoder().decode(AssignmentBook.self, from: data) {
-            return book
+        if let data = defaults.data(forKey: key) {
+            if let book = try? JSONDecoder().decode(AssignmentBook.self, from: data) {
+                return book
+            }
+            if let legacy = try? JSONDecoder().decode(LegacyProgramBook.self, from: data) {
+                let book = AssignmentBook(assignments: legacy.assignments.mapValues(AssignmentTarget.program))
+                save(book)
+                return book
+            }
         }
-        return migrateLegacyAssignments()
+        return migrateLegacyWindowAssignments()
     }
 
     public func save(_ book: AssignmentBook) {
@@ -74,30 +158,21 @@ public final class AssignmentStore: @unchecked Sendable {
         defaults.set(data, forKey: key)
     }
 
-    private func migrateLegacyAssignments() -> AssignmentBook {
-        struct LegacyWindow: Decodable {
-            let bundleIdentifier: String
-        }
-        struct LegacyBook: Decodable {
-            let assignments: [String: LegacyWindow]
-        }
-
+    private func migrateLegacyWindowAssignments() -> AssignmentBook {
         guard let data = defaults.data(forKey: legacyKey),
-              let legacy = try? JSONDecoder().decode(LegacyBook.self, from: data)
+              let legacy = try? JSONDecoder().decode(LegacyWindowBook.self, from: data)
         else { return AssignmentBook() }
 
-        var seenBundles = Set<String>()
-        var migrated: [String: ProgramIdentity] = [:]
-        for (letter, window) in legacy.assignments.sorted(by: { $0.key < $1.key }) {
-            guard seenBundles.insert(window.bundleIdentifier).inserted else { continue }
-            migrated[letter] = ProgramIdentity(
-                bundleIdentifier: window.bundleIdentifier,
-                name: window.bundleIdentifier
-            )
-        }
-
-        let book = AssignmentBook(assignments: migrated)
+        let book = AssignmentBook(assignments: legacy.assignments.mapValues(AssignmentTarget.window))
         save(book)
         return book
     }
+}
+
+private struct LegacyProgramBook: Decodable {
+    let assignments: [String: ProgramIdentity]
+}
+
+private struct LegacyWindowBook: Decodable {
+    let assignments: [String: WindowIdentity]
 }

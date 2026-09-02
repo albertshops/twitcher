@@ -74,13 +74,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func activate(letter: Character) {
-        guard let identity = store.load().identity(for: letter),
-              let program = service.matchingProgram(for: identity)
-        else {
+        let book = store.load()
+        guard let target = book.target(for: letter) else {
             NSSound.beep()
             return
         }
-        service.cycleWindows(in: program)
+
+        switch target {
+        case let .program(identity):
+            guard let program = service.matchingProgram(for: identity) else {
+                NSSound.beep()
+                return
+            }
+            let assignedWindows = book.windowIdentities(for: identity)
+            if !service.cycleWindows(in: program, excluding: assignedWindows) {
+                NSSound.beep()
+            }
+        case let .window(identity):
+            guard let window = service.matchingWindow(for: identity) else {
+                NSSound.beep()
+                return
+            }
+            service.focus(window)
+        }
     }
 
     private func showPermissionAlert() {

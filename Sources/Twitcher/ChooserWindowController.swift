@@ -12,6 +12,20 @@ private final class KeyCapturePanel: NSPanel {
     }
 }
 
+private enum ChooserRow {
+    case program(ManagedProgram)
+    case window(ManagedWindow)
+
+    var target: AssignmentTarget {
+        switch self {
+        case let .program(program):
+            .program(program.identity)
+        case let .window(window):
+            .window(window.identity)
+        }
+    }
+}
+
 @MainActor
 final class ChooserWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
     private let service: WindowService
@@ -19,7 +33,7 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
     private let onAssignmentsChanged: () -> Void
     private let tableView = NSTableView()
     private let emptyLabel = NSTextField(labelWithString: "")
-    private var rows: [ManagedProgram] = []
+    private var rows: [ChooserRow] = []
     private var book: AssignmentBook
 
     init(service: WindowService, store: AssignmentStore, onAssignmentsChanged: @escaping () -> Void) {
@@ -67,7 +81,7 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < rows.count, let identifier = tableColumn?.identifier else { return nil }
-        let program = rows[row]
+        let chooserRow = rows[row]
         let cell = NSTableCellView()
         let text = NSTextField(labelWithString: "")
         text.lineBreakMode = .byTruncatingTail
@@ -82,15 +96,28 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
 
         switch identifier.rawValue {
         case "key":
-            text.stringValue = book.letter(for: program.identity).map { "⌥\(String($0).uppercased())" } ?? "—"
+            text.stringValue = book.letter(for: chooserRow.target).map { "⌥\(String($0).uppercased())" } ?? "—"
             text.alignment = .center
             text.font = .monospacedSystemFont(ofSize: 14, weight: .semibold)
         case "app":
-            text.stringValue = program.identity.name
+            switch chooserRow {
+            case let .program(program):
+                text.stringValue = program.identity.name
+                text.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+            case .window:
+                text.stringValue = "    ↳ Window"
+                text.textColor = .secondaryLabelColor
+            }
         default:
-            let count = program.windows.count
-            let suffix = count == 1 ? "window" : "windows"
-            text.stringValue = "\(count) \(suffix): " + program.windows.map(\.title).joined(separator: ", ")
+            switch chooserRow {
+            case let .program(program):
+                let count = program.windows.count
+                let suffix = count == 1 ? "window" : "windows"
+                text.stringValue = count == 1 ? program.windows[0].title : "Cycles through \(count) \(suffix)"
+                text.textColor = .secondaryLabelColor
+            case let .window(window):
+                text.stringValue = window.title + (window.isMinimized ? "  (minimized)" : "")
+            }
         }
         return cell
     }
@@ -109,7 +136,7 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
 
         let title = NSTextField(labelWithString: "Choose a program")
         title.font = .systemFont(ofSize: 24, weight: .bold)
-        let instructions = NSTextField(labelWithString: "Select a program and type A–Z to assign it. Return opens it. Delete clears its assignment.")
+        let instructions = NSTextField(labelWithString: "A–Z assigns; Return opens; Delete clears. Program shortcuts cycle unassigned windows.")
         instructions.textColor = .secondaryLabelColor
 
         let scrollView = NSScrollView()
@@ -124,7 +151,7 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
         tableView.delegate = self
         tableView.dataSource = self
         tableView.target = self
-        tableView.doubleAction = #selector(openSelectedProgram)
+        tableView.doubleAction = #selector(openSelectedTarget)
 
         let keyColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("key"))
         keyColumn.width = 72
@@ -162,7 +189,16 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
 
     private func refresh() {
         book = store.load()
-        rows = service.programs()
+        rows = service.programs().flatMap { program in
+            var programRows: [ChooserRow] = [.program(program)]
+            let hasAssignedWindow = program.windows.contains {
+                book.letter(for: .window($0.identity)) != nil
+            }
+            if program.windows.count > 1 || hasAssignedWindow {
+                programRows.append(contentsOf: program.windows.map(ChooserRow.window))
+            }
+            return programRows
+        }
         emptyLabel.stringValue = service.isAccessibilityGranted()
             ? "No programs with standard windows are currently open."
             : "Accessibility access is required. Use the Twitcher menu to grant it."
@@ -181,11 +217,11 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
             close()
             return true
         case 36, 76: // Return or keypad Enter
-            openSelectedProgram()
+            openSelectedTarget()
             return true
         case 51, 117: // Delete or forward delete
-            guard let selected = selectedProgram else { return true }
-            book.remove(program: selected.identity)
+            guard let selectedRow else { return true }
+            book.remove(target: selectedRow.target)
             persistChanges()
             return true
         case 125: // Down arrow
@@ -199,15 +235,20 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
                   let character = event.charactersIgnoringModifiers?.lowercased().first,
                   character.isASCII,
                   character.isLetter,
-                  let selected = selectedProgram
+                  let selectedRow
             else { return false }
-            book.assign(character, to: selected.identity)
+            if case let .window(identity) = selectedRow.target,
+               service.matchingWindow(for: identity) == nil {
+                NSSound.beep()
+                return true
+            }
+            book.assign(character, to: selectedRow.target)
             persistChanges()
             return true
         }
     }
 
-    private var selectedProgram: ManagedProgram? {
+    private var selectedRow: ChooserRow? {
         let row = tableView.selectedRow
         return rows.indices.contains(row) ? rows[row] : nil
     }
@@ -220,10 +261,15 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
         tableView.scrollRowToVisible(next)
     }
 
-    @objc private func openSelectedProgram() {
-        guard let selectedProgram else { return }
+    @objc private func openSelectedTarget() {
+        guard let selectedRow else { return }
         close()
-        service.cycleWindows(in: selectedProgram)
+        switch selectedRow {
+        case let .program(program):
+            service.cycleWindows(in: program)
+        case let .window(window):
+            service.focus(window)
+        }
     }
 
     private func persistChanges() {
