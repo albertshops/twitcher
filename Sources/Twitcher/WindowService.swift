@@ -2,18 +2,23 @@ import AppKit
 import ApplicationServices
 import TwitcherCore
 
+@_silgen_name("_AXUIElementGetWindow")
+private func AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
+
 struct ManagedWindow {
     let element: AXUIElement
     let application: NSRunningApplication
     let title: String
     let documentURL: String?
+    let windowNumber: Int?
     let isMinimized: Bool
 
     var identity: WindowIdentity {
         WindowIdentity(
             bundleIdentifier: application.bundleIdentifier ?? "pid:\(application.processIdentifier)",
             title: title,
-            documentURL: documentURL
+            documentURL: documentURL,
+            windowNumber: windowNumber
         )
     }
 }
@@ -66,8 +71,12 @@ final class WindowService {
     }
 
     func matchingWindow(for identity: WindowIdentity) -> ManagedWindow? {
-        let matches = programs().flatMap(\.windows).filter { identity.matches($0.identity) }
-        return matches.count == 1 ? matches[0] : nil
+        let windows = programs().flatMap(\.windows)
+        let exactMatches = windows.filter { identity.matches($0.identity) }
+        if exactMatches.count == 1 { return exactMatches[0] }
+
+        let persistedMatches = windows.filter { identity.matchesPersistedProperties($0.identity) }
+        return persistedMatches.count == 1 ? persistedMatches[0] : nil
     }
 
     @discardableResult
@@ -133,12 +142,14 @@ final class WindowService {
             let rawTitle: String = attribute(kAXTitleAttribute, from: element) ?? ""
             let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled Window" : rawTitle
             let documentURL: String? = attribute(kAXDocumentAttribute, from: element)
+            let windowNumber = windowNumber(for: element)
             let minimized: Bool = attribute(kAXMinimizedAttribute, from: element) ?? false
             return ManagedWindow(
                 element: element,
                 application: application,
                 title: title,
                 documentURL: documentURL,
+                windowNumber: windowNumber,
                 isMinimized: minimized
             )
         }
@@ -148,5 +159,11 @@ final class WindowService {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
         return value as? T
+    }
+
+    private func windowNumber(for element: AXUIElement) -> Int? {
+        var windowID = CGWindowID(0)
+        guard AXUIElementGetWindow(element, &windowID) == .success else { return nil }
+        return Int(windowID)
     }
 }

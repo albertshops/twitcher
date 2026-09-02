@@ -45,6 +45,27 @@ expect(notes.matches(movedNotes), "document URLs should survive window title cha
 let untitled = WindowIdentity(bundleIdentifier: editor.bundleIdentifier, title: "Scratch", documentURL: nil)
 let sameUntitled = WindowIdentity(bundleIdentifier: editor.bundleIdentifier, title: "Scratch", documentURL: nil)
 expect(untitled.matches(sameUntitled), "windows without documents should match by title")
+let firstScratch = WindowIdentity(
+    bundleIdentifier: editor.bundleIdentifier,
+    title: "Scratch",
+    documentURL: nil,
+    windowNumber: 10
+)
+let secondScratch = WindowIdentity(
+    bundleIdentifier: editor.bundleIdentifier,
+    title: "Scratch",
+    documentURL: nil,
+    windowNumber: 11
+)
+expect(!firstScratch.matches(secondScratch), "live windows with the same title should remain distinct")
+expect(firstScratch.matchesPersistedProperties(secondScratch), "saved window matching should retain the title fallback")
+let renamedScratch = WindowIdentity(
+    bundleIdentifier: editor.bundleIdentifier,
+    title: "Another Folder",
+    documentURL: nil,
+    windowNumber: firstScratch.windowNumber
+)
+expect(firstScratch.matches(renamedScratch), "a live window ID should survive title changes")
 
 let browser = ProgramIdentity(bundleIdentifier: "com.example.Browser", name: "Browser")
 let browserTarget = AssignmentTarget.program(browser)

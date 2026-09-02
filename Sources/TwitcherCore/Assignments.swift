@@ -18,14 +18,24 @@ public struct WindowIdentity: Codable, Equatable, Hashable, Sendable {
     public let bundleIdentifier: String
     public let title: String
     public let documentURL: String?
+    public let windowNumber: Int?
 
-    public init(bundleIdentifier: String, title: String, documentURL: String?) {
+    public init(bundleIdentifier: String, title: String, documentURL: String?, windowNumber: Int? = nil) {
         self.bundleIdentifier = bundleIdentifier
         self.title = title
         self.documentURL = documentURL
+        self.windowNumber = windowNumber
     }
 
     public func matches(_ candidate: WindowIdentity) -> Bool {
+        guard bundleIdentifier == candidate.bundleIdentifier else { return false }
+        if let windowNumber, let candidateWindowNumber = candidate.windowNumber {
+            return windowNumber == candidateWindowNumber
+        }
+        return matchesPersistedProperties(candidate)
+    }
+
+    public func matchesPersistedProperties(_ candidate: WindowIdentity) -> Bool {
         guard bundleIdentifier == candidate.bundleIdentifier else { return false }
         if let documentURL {
             return documentURL == candidate.documentURL

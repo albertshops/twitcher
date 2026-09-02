@@ -104,20 +104,12 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
             case let .program(program):
                 text.stringValue = program.identity.name
                 text.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-            case .window:
-                text.stringValue = "    ↳ Window"
+            case let .window(window):
+                text.stringValue = "    ↳ \(window.title)" + (window.isMinimized ? "  (minimized)" : "")
                 text.textColor = .secondaryLabelColor
             }
         default:
-            switch chooserRow {
-            case let .program(program):
-                let count = program.windows.count
-                let suffix = count == 1 ? "window" : "windows"
-                text.stringValue = count == 1 ? program.windows[0].title : "Cycles through \(count) \(suffix)"
-                text.textColor = .secondaryLabelColor
-            case let .window(window):
-                text.stringValue = window.title + (window.isMinimized ? "  (minimized)" : "")
-            }
+            return nil
         }
         return cell
     }
@@ -156,12 +148,9 @@ final class ChooserWindowController: NSWindowController, NSTableViewDataSource, 
         let keyColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("key"))
         keyColumn.width = 72
         let appColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("app"))
-        appColumn.width = 180
-        let titleColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("title"))
-        titleColumn.width = 410
+        appColumn.width = 590
         tableView.addTableColumn(keyColumn)
         tableView.addTableColumn(appColumn)
-        tableView.addTableColumn(titleColumn)
         scrollView.documentView = tableView
 
         emptyLabel.alignment = .center
